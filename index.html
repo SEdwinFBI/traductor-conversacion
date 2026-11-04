@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Traductor de Conversación en Vivo</title>
+<style>
+  :root{
+    --bg:#0f1419; --panel:#182029; --panel2:#1f2a36; --line:#2c3a49;
+    --text:#e8eef4; --muted:#8a9bad; --accent:#4fc3a1; --accent2:#5aa9f0; --warn:#f0a35a; --rec:#ef5b5b;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column}
+  header{display:flex;align-items:center;gap:12px;padding:14px 20px;border-bottom:1px solid var(--line);background:var(--panel)}
+  header h1{font-size:17px;margin:0;font-weight:600;flex:1}
+  .status{font-size:13px;color:var(--muted);display:flex;align-items:center;gap:8px}
+  .dot{width:10px;height:10px;border-radius:50%;background:var(--muted)}
+  .dot.on{background:var(--rec);animation:pulse 1.2s infinite}
+  @keyframes pulse{50%{opacity:.35}}
+  button{font:inherit;cursor:pointer;border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:8px;padding:8px 14px}
+  button:hover{border-color:var(--accent2)}
+  button.primary{background:var(--accent);color:#06201a;border-color:var(--accent);font-weight:600}
+  button.stop{background:var(--rec);border-color:var(--rec);color:#fff}
+  main{flex:1;display:grid;grid-template-columns:1.4fr 1fr;gap:16px;padding:16px 20px;min-height:0}
+  @media (max-width:860px){main{grid-template-columns:1fr}}
+  section{background:var(--panel);border:1px solid var(--line);border-radius:12px;display:flex;flex-direction:column;min-height:0}
+  section h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0;padding:12px 16px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}
+  .scroll{overflow-y:auto;padding:12px 16px;flex:1;max-height:calc(100vh - 230px)}
+  .live{padding:14px 16px;border-top:1px solid var(--line);min-height:56px;color:var(--muted);font-style:italic;font-size:15px}
+  .msg{padding:10px 12px;border-radius:10px;background:var(--panel2);margin-bottom:10px;border-left:3px solid var(--accent2)}
+  .msg .en{font-size:14px;color:var(--muted);margin-bottom:4px}
+  .msg .es{font-size:20px;line-height:1.35}
+  .msg .es.pending{color:var(--muted);font-size:15px}
+  .msg.me{border-left-color:var(--accent)}
+  .sugg{padding:10px 12px;border-radius:10px;background:var(--panel2);margin-bottom:10px;display:flex;gap:10px;align-items:flex-start}
+  .sugg .body{flex:1}
+  .sugg .en{font-size:17px;font-weight:500}
+  .sugg .pron{font-size:13px;color:var(--warn);margin-top:2px}
+  .sugg .es{font-size:13px;color:var(--muted);margin-top:3px}
+  .sugg button{padding:6px 9px;font-size:14px}
+  .empty{color:var(--muted);font-size:14px;text-align:center;padding:30px 10px}
+  .bar{display:flex;gap:10px;align-items:center;padding:12px 20px;border-top:1px solid var(--line);background:var(--panel);flex-wrap:wrap}
+  .bar .spacer{flex:1}
+  .note{font-size:12px;color:var(--muted)}
+  dialog{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:12px;max-width:520px;width:92%}
+  dialog::backdrop{background:rgba(0,0,0,.6)}
+  dialog label{display:block;font-size:13px;color:var(--muted);margin:14px 0 6px}
+  dialog input,dialog select{width:100%;padding:9px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text);font:inherit}
+  .err{background:#3a1f1f;border:1px solid #7a3434;color:#ffc9c9;padding:10px 14px;margin:10px 20px 0;border-radius:8px;font-size:14px;display:none}
+  .mode{font-size:11px;padding:3px 8px;border-radius:20px;background:var(--panel2);border:1px solid var(--line);color:var(--muted)}
+</style>
+</head>
+<body>
+<header>
+  <h1>🎧 Traductor de Conversación en Vivo</h1>
+  <span class="mode" id="modeTag">Modo básico</span>
+  <div class="status"><span class="dot" id="dot"></span><span id="statusTxt">Detenido</span></div>
+  <button id="settingsBtn" title="Ajustes">⚙️</button>
+</header>
+
+<div class="err" id="err"></div>
+
+<main>
+  <section>
+    <h2>Conversación (inglés → español) <button id="clearBtn" style="padding:4px 10px;font-size:12px">Limpiar</button></h2>
+    <div class="scroll" id="convo"><div class="empty" id="convoEmpty">Pulsa <b>Escuchar</b> y deja que la otra persona hable en inglés.<br>Aquí aparecerá cada frase con su traducción.</div></div>
+    <div class="live" id="live">…</div>
+  </section>
+  <section>
+    <h2>Posibles respuestas <span id="suggState" style="text-transform:none;letter-spacing:0"></span></h2>
+    <div class="scroll" id="suggs"><div class="empty">Las sugerencias de qué responder aparecerán aquí después de cada frase.</div></div>
+  </section>
+</main>
+
+<div class="bar">
+  <button class="primary" id="toggleBtn">🎙️ Escuchar</button>
+  <label class="note"><input type="checkbox" id="autoPause" checked> Pausar mientras reproduzco una respuesta</label>
+  <span class="spacer"></span>
+  <span class="note" id="hint">Necesita internet. Usa Chrome o Edge.</span>
+</div>
+
+<dialog id="settings">
+  <h3 style="margin-top:0">Ajustes</h3>
+  <p class="note">Pega tu clave de la API de OpenAI para que la voz se reconozca y traduzca con IA y las respuestas se adapten a la conversación. Sin clave, la app usa el reconocimiento de voz de Chrome, una traducción gratuita y respuestas genéricas.</p>
+  <label for="apiKey">Clave API de OpenAI</label>
+  <input id="apiKey" type="password" placeholder="sk-...">
+  <label for="model">Modelo para traducir y sugerir</label>
+  <select id="model">
+    <option value="gpt-5.6-luna">GPT-5.6 Luna (el más rápido y barato, recomendado)</option>
+    <option value="gpt-5.6-terra">GPT-5.6 Terra (más preciso)</option>
+  </select>
+  <label for="stt">Reconocimiento de voz</label>
+  <select id="stt">
+    <option value="openai">OpenAI (gpt-transcribe) — funciona aunque abras el archivo directamente</option>
+    <option value="browser">Navegador (gratis, solo Chrome/Edge, más inmediato)</option>
+  </select>
+  <label for="sens">Sensibilidad del micrófono (modo OpenAI)</label>
+  <select id="sens">
+    <option value="high">Alta (voz lejana o baja)</option>
+    <option value="medium">Media</option>
+    <option value="low">Baja (lugar con ruido)</option>
+  </select>
+  <label for="accent">Acento (voz del navegador y pronunciación)</label>
+  <select id="accent">
+    <option value="en-US">Inglés (Estados Unidos)</option>
+    <option value="en-GB">Inglés (Reino Unido)</option>
+    <option value="en-AU">Inglés (Australia)</option>
+    <option value="en-IN">Inglés (India)</option>
+  </select>
+  <label for="ctx">Contexto de la conversación (opcional)</label>
+  <input id="ctx" placeholder="Ej.: entrevista de trabajo, en el aeropuerto, con un cliente…">
+  <p class="note">La clave se guarda solo en este navegador y se envía únicamente a OpenAI.</p>
+  <div id="diag" class="note" style="white-space:pre-line;margin-top:10px"></div>
+  <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
+    <button id="testBtn" style="margin-right:auto">🔌 Probar conexión</button>
+    <button id="closeSettings">Cancelar</button>
+    <button class="primary" id="saveSettings">Guardar</button>
+  </div>
+</dialog>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const store = {
+    get(k, d=""){ try { return localStorage.getItem("tcvo_"+k) ?? d; } catch { return d; } },
+    set(k, v){ try { localStorage.setItem("tcvo_"+k, v); } catch {} }
+  };
+  let cfg = {
+    apiKey: store.get("apiKey"), model: store.get("model","gpt-5.6-luna"), stt: store.get("stt","openai"),
+    sens: store.get("sens","medium"), accent: store.get("accent","en-US"), ctx: store.get("ctx")
+  };
+  const OPENAI = "https://api.openai.com/v1";
+  const history = []; // {role:'them'|'me', en, es}
+  let listening = false, speaking = false, reqId = 0;
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+  function showErr(t){ const e=$("err"); e.textContent=t; e.style.display=t?"block":"none"; }
+  const useOpenAISTT = () => cfg.apiKey && cfg.stt === "openai";
+  function setMode(){
+    $("modeTag").textContent = cfg.apiKey ? ("OpenAI · " + (useOpenAISTT() ? "voz + IA" : "IA")) : "Modo básico (sin clave)";
+  }
+  setMode();
+  if (!cfg.apiKey) setTimeout(() => $("settingsBtn").click(), 300);
+
+  function setStatus(on, txt){
+    $("dot").classList.toggle("on", on); $("statusTxt").textContent = txt;
+  }
+
+  // ================= Micrófono con OpenAI (detección de voz + gpt-transcribe) =================
+  let stream, actx, analyser, rafTimer, recorder, chunks = [], segStart = 0, lastVoice = 0, voiced = 0, noise = 0.01;
+  const SENS = { high: 2.0, medium: 3.0, low: 4.5 };
+  const MIN_ABS = { high: 0.006, medium: 0.012, low: 0.02 };
+
+  function pickMime(){
+    for (const m of ["audio/webm;codecs=opus","audio/webm","audio/mp4","audio/ogg;codecs=opus"])
+      if (window.MediaRecorder && MediaRecorder.isTypeSupported(m)) return m;
+    return "";
+  }
+
+  // El micrófono se pide UNA sola vez y se mantiene abierto mientras la página esté abierta;
+  // al «Detener» solo se pausa (así Chrome no vuelve a pedir permiso en archivos locales).
+  async function getMic(){
+    if (stream && stream.getAudioTracks().some(t => t.readyState === "live")) return stream;
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:true } });
+    return stream;
+  }
+  async function startOpenAIMic(){
+    const fresh = !(stream && stream.getAudioTracks().some(t => t.readyState === "live"));
+    await getMic();
+    stream.getAudioTracks().forEach(t => t.enabled = true);
+    if (!fresh && actx && rafTimer) { if (actx.state === "suspended") await actx.resume(); return; }
+    if (actx) { try { actx.close(); } catch {} clearInterval(rafTimer); }
+    actx = new (window.AudioContext || window.webkitAudioContext)();
+    const src = actx.createMediaStreamSource(stream);
+    analyser = actx.createAnalyser(); analyser.fftSize = 1024;
+    src.connect(analyser);
+    const buf = new Float32Array(analyser.fftSize);
+    const mime = pickMime();
+
+    rafTimer = setInterval(() => {
+      if (!listening) return;
+      analyser.getFloatTimeDomainData(buf);
+      let sum = 0; for (const v of buf) sum += v*v;
+      const rms = Math.sqrt(sum / buf.length);
+      const now = performance.now();
+      const thr = Math.max(MIN_ABS[cfg.sens], noise * SENS[cfg.sens]);
+      const isVoice = rms > thr && !speaking;
+
+      if (!recorder) {
+        noise = noise * 0.97 + rms * 0.03; // ruido de fondo
+        if (isVoice) {
+          recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+          chunks = []; segStart = now; lastVoice = now; voiced = 0;
+          recorder.ondataavailable = e => e.data.size && chunks.push(e.data);
+          recorder.onstop = () => {
+            const dur = voiced; const type = recorder.mimeType || mime || "audio/webm";
+            const blob = new Blob(chunks, { type }); recorder = null;
+            if (dur >= 300) transcribe(blob, type);
+            if (listening) $("live").textContent = "…";
+          };
+          recorder.start();
+          $("live").textContent = "🎤 Escuchando voz…";
+        }
+      } else {
+        if (isVoice) { voiced += now - lastVoice > 60 ? 50 : now - lastVoice; lastVoice = now; }
+        const silence = now - lastVoice, total = now - segStart;
+        if (silence > 600 || total > 9000 || speaking) { try { recorder.stop(); } catch {} }
+      }
+    }, 50);
+  }
+
+  function stopOpenAIMic(){
+    try { recorder && recorder.state !== "inactive" && recorder.stop(); } catch {}
+    try { stream && stream.getAudioTracks().forEach(t => t.enabled = false); } catch {} // pausa sin soltar el permiso
+  }
+
+  async function transcribe(blob, type){
+    const ext = type.includes("mp4") ? "m4a" : type.includes("ogg") ? "ogg" : "webm";
+    const fd = new FormData();
+    fd.append("file", blob, "audio." + ext);
+    fd.append("model", "gpt-transcribe");
+    fd.append("language", "en");
+    const recent = history.slice(-3).map(h => h.en).join(" ");
+    if (recent) fd.append("prompt", recent.slice(-400));
+    if (listening) $("live").textContent = "✍️ Transcribiendo…";
+    try {
+      let r = await fetch(OPENAI + "/audio/transcriptions", { method:"POST", headers:{ Authorization:"Bearer " + cfg.apiKey }, body: fd });
+      let j = await r.json().catch(() => ({}));
+      if (!r.ok && /model/i.test(j?.error?.message || "")) { // respaldo si el modelo no está disponible en la cuenta
+        fd.set("model", "gpt-4o-mini-transcribe");
+        r = await fetch(OPENAI + "/audio/transcriptions", { method:"POST", headers:{ Authorization:"Bearer " + cfg.apiKey }, body: fd });
+        j = await r.json().catch(() => ({}));
+      }
+      if (!r.ok) throw new Error(j?.error?.message || ("HTTP " + r.status));
+      const text = (j.text || "").trim();
+      $("live").textContent = "…";
+      if (text && !isNoise(text)) onPhrase(text);
+    } catch (e) {
+      showErr(e instanceof TypeError
+        ? "No se pudo conectar con OpenAI. Abre ⚙️ Ajustes → «Probar conexión» para ver la causa (suele ser un bloqueador de anuncios, antivirus o la red)."
+        : "Error al transcribir: " + e.message);
+      if (listening) $("live").textContent = "…";
+    }
+  }
+  // frases que los modelos de voz a veces "inventan" con ruido
+  function isNoise(t){
+    return /^(\W*|thank you\.?|thanks for watching\.?|you|bye\.?|\.+|subtitles.*)$/i.test(t.trim());
+  }
+
+  // ================= Micrófono del navegador (Web Speech API) =================
+  let rec = null;
+  function startBrowserRec(){
+    rec = new SR();
+    rec.lang = cfg.accent; rec.continuous = true; rec.interimResults = true;
+    rec.onresult = ev => {
+      let interim = "";
+      for (let i = ev.resultIndex; i < ev.results.length; i++) {
+        const r = ev.results[i];
+        if (r.isFinal) { const t = r[0].transcript.trim(); if (t) onPhrase(t); }
+        else interim += r[0].transcript;
+      }
+      $("live").textContent = interim || "…";
+    };
+    rec.onerror = e => {
+      if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+        showErr(cfg.apiKey
+          ? "Chrome bloquea su reconocimiento de voz aquí. En ⚙️ Ajustes elige «Reconocimiento de voz: OpenAI»."
+          : "Chrome bloquea su reconocimiento de voz al abrir el archivo directamente. Agrega tu clave de OpenAI en ⚙️ Ajustes para usar el reconocimiento de OpenAI.");
+        stop();
+      } else if (e.error === "network") showErr("El reconocimiento de voz de Chrome necesita internet.");
+    };
+    rec.onend = () => { if (listening && !speaking && !useOpenAISTT()) { try { rec.start(); } catch {} } };
+    try { rec.start(); } catch {}
+  }
+
+  // ================= Iniciar / detener =================
+  async function start(){
+    showErr("");
+    if (window.self !== window.top) {
+      showErr("Estás viendo la app dentro de una vista previa, y ahí el micrófono está bloqueado. Descarga el archivo y ábrelo directamente en Google Chrome.");
+      return;
+    }
+    if (!useOpenAISTT() && !SR) {
+      showErr("Este navegador no tiene reconocimiento de voz. Agrega tu clave de OpenAI en ⚙️ Ajustes para usar el de OpenAI.");
+      return;
+    }
+    try {
+      if (useOpenAISTT()) { listening = true; await startOpenAIMic(); }
+      else {
+        await getMic();
+        listening = true; startBrowserRec();
+      }
+    } catch (e) {
+      listening = false;
+      showErr(e.name === "NotFoundError" ? "No se encontró ningún micrófono conectado."
+        : "Chrome bloqueó el micrófono. Haz clic en el icono a la izquierda de la dirección (🔒 o ⓘ) → Micrófono → Permitir, y recarga. Revisa también que Windows/Mac permita a Chrome usar el micrófono.");
+      return;
+    }
+    $("toggleBtn").textContent = "⏹ Detener"; $("toggleBtn").className = "stop";
+    setStatus(true, "Escuchando…");
+  }
+  function stop(){
+    listening = false;
+    try { rec && rec.stop(); } catch {}
+    stopOpenAIMic();
+    $("toggleBtn").textContent = "🎙️ Escuchar"; $("toggleBtn").className = "primary";
+    setStatus(false, "Detenido"); $("live").textContent = "…";
+  }
+  $("toggleBtn").onclick = () => listening ? stop() : start();
+
+  // ================= Conversación =================
+  function addMsg(role, en){
+    $("convoEmpty")?.remove();
+    const d = document.createElement("div");
+    d.className = "msg" + (role === "me" ? " me" : "");
+    d.innerHTML = `<div class="en"></div><div class="es pending">Traduciendo…</div>`;
+    d.querySelector(".en").textContent = (role==="me" ? "Tú: " : "") + en;
+    $("convo").appendChild(d);
+    $("convo").scrollTop = $("convo").scrollHeight;
+    return d;
+  }
+  function setTranslation(el, es){
+    const n = el.querySelector(".es"); n.classList.remove("pending"); n.textContent = es;
+    $("convo").scrollTop = $("convo").scrollHeight;
+  }
+
+  async function onPhrase(en){
+    const t0 = performance.now();
+    const entry = { role:"them", en, es:"" };
+    history.push(entry);
+    const el = addMsg("them", en);
+    const my = ++reqId;
+    $("suggState").textContent = "pensando…";
+
+    if (!cfg.apiKey) {
+      try { entry.es = await freeTranslate(en); setTranslation(el, entry.es); showErr(""); }
+      catch (e) { setTranslation(el, "⚠️ No se pudo traducir"); showErr("Error: " + e.message); }
+      if (my === reqId) { renderSuggs(basicSuggestions(en)); $("suggState").textContent = ""; }
+      return;
+    }
+
+    // Traducción (en streaming) y sugerencias en paralelo
+    const tr = translateStream(en, partial => { entry.es = partial; setTranslation(el, partial); })
+      .then(es => { entry.es = es; setTranslation(el, es); setTime(el, performance.now() - t0); })
+      .catch(e => { setTranslation(el, "⚠️ No se pudo traducir"); showErr("Error: " + e.message); });
+    const sg = suggestOpenAI(en)
+      .then(list => { if (my === reqId) renderSuggs(list); })
+      .catch(e => { if (my === reqId) renderSuggs(basicSuggestions(en)); showErr("Error: " + e.message); });
+    await Promise.all([tr, sg]);
+    if (my === reqId) $("suggState").textContent = "";
+  }
+  function setTime(el, ms){
+    let t = el.querySelector(".t");
+    if (!t) { t = document.createElement("div"); t.className = "t"; t.style.cssText = "font-size:11px;color:var(--muted);margin-top:4px"; el.appendChild(t); }
+    t.textContent = "⏱ traducido en " + (ms/1000).toFixed(1) + " s";
+  }
+
+  // ================= Traducción gratuita (sin clave) =================
+  async function freeTranslate(text){
+    const r = await fetch("https://api.mymemory.translated.net/get?langpair=en|es&q=" + encodeURIComponent(text.slice(0, 480)));
+    if (!r.ok) throw new Error("servicio de traducción gratuito no disponible");
+    const j = await r.json();
+    return j?.responseData?.translatedText || "(sin traducción)";
+  }
+
+  // ================= OpenAI =================
+  // Esfuerzo de razonamiento mínimo para responder rápido; se prueba el más bajo que acepte el modelo.
+  const EFFORTS = ["none", "minimal", "low", null];
+  let effortIdx = 0;
+  try { effortIdx = Math.min(+sessionStorage.getItem("tcvo_eff") || 0, 3); } catch {}
+
+  async function chat(body){
+    while (true) {
+      const eff = EFFORTS[effortIdx];
+      const b = eff ? { ...body, reasoning_effort: eff } : body;
+      const r = await fetch(OPENAI + "/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type":"application/json", Authorization: "Bearer " + cfg.apiKey },
+        body: JSON.stringify({ model: cfg.model, ...b })
+      });
+      if (r.ok) return r;
+      const j = await r.json().catch(() => ({}));
+      const msg = j?.error?.message || ("HTTP " + r.status);
+      if (r.status === 400 && /reasoning/i.test(msg) && effortIdx < EFFORTS.length - 1) {
+        if (EFFORTS[effortIdx] === eff) effortIdx++;
+        try { sessionStorage.setItem("tcvo_eff", effortIdx); } catch {}
+        continue;
+      }
+      throw new Error(msg);
+    }
+  }
+
+  function recentText(n){
+    return history.slice(-n, -1).map(h => (h.role==="them" ? "OTHER: " : "ME: ") + h.en).join("\n");
+  }
+
+  async function translateStream(latest, onPartial){
+    const recent = recentText(5);
+    const r = await chat({
+      stream: true,
+      messages: [
+        { role:"system", content: "Translate the user's last English phrase into natural Latin American Spanish. It comes from speech recognition and may have small errors; infer the meaning. Output ONLY the translation, nothing else." + (cfg.ctx ? " Situation: " + cfg.ctx : "") },
+        { role:"user", content: (recent ? "Previous lines (context only):\n" + recent + "\n\nTranslate:\n" : "") + latest }
+      ]
+    });
+    const reader = r.body.getReader(); const dec = new TextDecoder();
+    let buf = "", out = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split("\n"); buf = lines.pop();
+      for (const line of lines) {
+        const s = line.trim();
+        if (!s.startsWith("data:")) continue;
+        const data = s.slice(5).trim();
+        if (data === "[DONE]") continue;
+        try { const d = JSON.parse(data).choices?.[0]?.delta?.content; if (d) { out += d; onPartial(out); } } catch {}
+      }
+    }
+    return out.trim();
+  }
+
+  async function suggestOpenAI(latest){
+    const recent = recentText(10);
+    const system = `You help a Spanish speaker from Latin America reply in a live spoken conversation in English.
+${cfg.ctx ? "Situation: " + cfg.ctx + "\n" : ""}Reply ONLY with JSON: {"s":[{"en":"short natural English reply","pron":"easy pronunciation guide for a Spanish speaker, e.g. 'ai fil grêit'","es":"Spanish meaning"}]}
+Give 4 varied replies (positive, negative/alternative, a follow-up question, a clarification if useful). Under 12 words each, simple spoken style.`;
+    const r = await chat({
+      response_format: { type: "json_object" },
+      messages: [{ role:"system", content: system }, { role:"user", content: (recent ? "Conversation:\n" + recent + "\n\n" : "") + "OTHER PERSON JUST SAID:\n" + latest }]
+    });
+    const j = await r.json();
+    const txt = j.choices?.[0]?.message?.content || "";
+    const m = txt.match(/\{[\s\S]*\}/);
+    if (!m) throw new Error("respuesta inesperada del modelo");
+    const o = JSON.parse(m[0]);
+    return o.s || o.suggestions || [];
+  }
+
+  // ================= Sugerencias básicas (sin clave) =================
+  const RULES = [
+    [/how are you|how's it going|how are things|how you doing/i, [
+      ["I'm good, thanks. And you?","aim gud, zanks. and iú?","Bien, gracias. ¿Y tú?"],
+      ["Pretty well, thank you.","príti uel, zank iú","Bastante bien, gracias."],
+      ["Not bad. How about you?","not bad. jau abáut iú?","Nada mal. ¿Y tú?"]]],
+    [/your name/i, [
+      ["My name is ...","mai néim is ...","Me llamo ..."],
+      ["I'm ... Nice to meet you.","aim ... nais tu mit iú","Soy ... Mucho gusto."]]],
+    [/where are you from|where do you live/i, [
+      ["I'm from Guatemala.","aim from guatemála","Soy de Guatemala."],
+      ["I live in ...","ai liv in ...","Vivo en ..."]]],
+    [/nice to meet you|pleasure/i, [["Nice to meet you too.","nais tu mit iú tu","Igualmente, mucho gusto."]]],
+    [/thank/i, [["You're welcome.","iór uélcom","De nada."],["No problem.","nou próblem","No hay problema."]]],
+    [/do you (want|like|need)|would you like/i, [
+      ["Yes, please.","ies, plis","Sí, por favor."],["No, thank you.","nou, zank iú","No, gracias."],["Maybe later.","méibi léiter","Quizás más tarde."]]],
+    [/can you|could you|will you/i, [
+      ["Sure, no problem.","shur, nou próblem","Claro, no hay problema."],["Sorry, I can't right now.","sóri, ai kant rait náu","Lo siento, no puedo ahora."]]],
+    [/what do you (do|think)|what time|how much|how many|when|where|why/i, [
+      ["Let me think for a second.","let mi zink for a sékond","Déjame pensar un momento."],["I'm not sure, to be honest.","aim not shur, tu bi ónest","No estoy seguro, la verdad."]]],
+    [/sorry|excuse me/i, [["No worries.","nou uóris","No te preocupes."],["It's okay.","its okéi","Está bien."]]],
+    [/bye|see you|take care|have a good/i, [["See you later!","si iú léiter","¡Nos vemos!"],["You too, take care.","iú tu, téik ker","Igualmente, cuídate."]]],
+  ];
+  const GENERIC = [
+    ["Could you repeat that, please?","kud iú ripít zat, plis?","¿Puedes repetir eso, por favor?"],
+    ["Could you speak more slowly?","kud iú spik mor slóuli?","¿Puedes hablar más despacio?"],
+    ["I see. That's interesting.","ai si. zats íntresting","Ya veo. Qué interesante."],
+    ["Yes, I agree.","ies, ai agrí","Sí, estoy de acuerdo."],
+  ];
+  function basicSuggestions(en){
+    let out = [];
+    for (const [re, list] of RULES) if (re.test(en)) out.push(...list);
+    if (!out.length && (/\?$/.test(en) || /^(do|does|did|are|is|can|could|would|will|have|what|how|where|when|why|who)\b/i.test(en)))
+      out.push(["Yes.","ies","Sí."],["No, not really.","nou, not ríli","No, la verdad no."]);
+    for (const g of GENERIC) if (out.length < 5) out.push(g);
+    return out.slice(0,5).map(([en,pron,es]) => ({en,pron,es}));
+  }
+
+  // ================= Mostrar sugerencias =================
+  function renderSuggs(list){
+    const box = $("suggs"); box.innerHTML = "";
+    if (!list.length) { box.innerHTML = '<div class="empty">Sin sugerencias.</div>'; return; }
+    for (const s of list) {
+      const d = document.createElement("div"); d.className = "sugg";
+      d.innerHTML = `<div class="body"><div class="en"></div><div class="pron"></div><div class="es"></div></div>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <button title="Escuchar pronunciación">🔊</button>
+          <button title="Marcar como dicha">✓</button>
+        </div>`;
+      d.querySelector(".en").textContent = s.en || "";
+      d.querySelector(".pron").textContent = s.pron ? "🗣 " + s.pron : "";
+      d.querySelector(".es").textContent = s.es || "";
+      const [play, used] = d.querySelectorAll("button");
+      play.onclick = () => speak(s.en);
+      used.onclick = () => {
+        history.push({ role:"me", en:s.en, es:s.es });
+        const el = addMsg("me", s.en); setTranslation(el, s.es || "");
+      };
+      box.appendChild(d);
+    }
+  }
+
+  function speak(text){
+    if (!("speechSynthesis" in window)) return;
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = cfg.accent; u.rate = 0.9;
+    const voices = speechSynthesis.getVoices();
+    const v = voices.find(v => v.lang === cfg.accent) || voices.find(v => v.lang.startsWith("en"));
+    if (v) u.voice = v;
+    const pause = $("autoPause").checked && listening;
+    if (pause) { speaking = true; if (!useOpenAISTT()) { try { rec.stop(); } catch {} } }
+    u.onend = u.onerror = () => {
+      if (pause) { setTimeout(() => { speaking = false; if (listening && !useOpenAISTT()) startBrowserRec(); }, 300); }
+    };
+    speechSynthesis.speak(u);
+  }
+
+  // ================= Ajustes =================
+  $("settingsBtn").onclick = () => {
+    for (const k of ["apiKey","model","stt","sens","accent","ctx"]) $(k).value = cfg[k];
+    $("settings").showModal();
+  };
+  $("closeSettings").onclick = () => $("settings").close();
+  $("testBtn").onclick = async () => {
+    const key = $("apiKey").value.trim(); const out = $("diag");
+    const lines = []; const show = () => out.textContent = lines.join("\n");
+    lines.push("Probando…"); show(); lines.length = 0;
+    lines.push("Página abierta como: " + location.protocol + (location.protocol === "file:" ? " (archivo local)" : ""));
+    try { await fetch("https://api.mymemory.translated.net/get?langpair=en|es&q=hi"); lines.push("✅ Internet: funciona"); }
+    catch { lines.push("❌ Internet: no hay conexión desde esta página"); }
+    show();
+    if (!key) { lines.push("⚠️ Falta la clave de OpenAI"); show(); return; }
+    if (/[^\x21-\x7e]/.test(key)) { lines.push("❌ La clave tiene espacios o caracteres raros. Cópiala de nuevo."); show(); return; }
+    try {
+      const r = await fetch(OPENAI + "/models", { headers: { Authorization: "Bearer " + key } });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok) lines.push("✅ OpenAI: conexión y clave correctas");
+      else if (r.status === 401) lines.push("❌ OpenAI: la clave no es válida (401). Crea una nueva en platform.openai.com → API keys.");
+      else if (r.status === 429) lines.push("❌ OpenAI: sin saldo o límite alcanzado (429). Revisa Billing en platform.openai.com.");
+      else lines.push("❌ OpenAI respondió " + r.status + ": " + (j?.error?.message || ""));
+    } catch {
+      lines.push("❌ OpenAI: el navegador no pudo conectarse a api.openai.com.\nCausas comunes: bloqueador de anuncios o extensión de privacidad (uBlock, AdBlock, Brave Shields), antivirus o firewall, o una red (trabajo/escuela) que bloquea OpenAI.\nPrueba en una ventana de incógnito sin extensiones, o con otra red (datos del celular).");
+    }
+    show();
+  };
+  $("saveSettings").onclick = () => {
+    const was = listening; if (was) stop();
+    for (const k of ["apiKey","model","stt","sens","accent","ctx"]) { cfg[k] = $(k).value.trim(); store.set(k, cfg[k]); }
+    setMode(); $("settings").close(); showErr("");
+    if (was) start();
+  };
+  $("clearBtn").onclick = () => {
+    history.length = 0;
+    $("convo").innerHTML = '<div class="empty" id="convoEmpty">Conversación limpia. Pulsa <b>Escuchar</b> para continuar.</div>';
+    $("suggs").innerHTML = '<div class="empty">Las sugerencias aparecerán aquí.</div>';
+  };
+})();
+</script>
+</body>
+</html>
